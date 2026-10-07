@@ -34,7 +34,7 @@ def armor_multiplier(armor):
 
 def resist_multiplier(resist):
     """抗性减伤系数。"""
-    return 1.0 - resist
+    return max(0.25, 1.0 - resist)
 
 
 class DotEffect:
@@ -66,14 +66,22 @@ class Combatant:
 
     @property
     def alive(self):
-        return self.hp >= 0.0
+        return self.hp > 0.0
 
     def missing_hp(self):
         """距离满血还差多少点。"""
         return max(0.0, self.max_hp - self.hp)
 
     def shield_cap(self):
-        return self.hp * SHIELD_RATIO
+        return self.max_hp * SHIELD_RATIO
+
+    def absorb_damage(self, damage):
+        """护盾先于生命吸收伤害，返回最终造成的伤害（不小于下限）。"""
+        damage = max(MIN_DAMAGE, float(damage))
+        absorbed = min(self.shield, damage)
+        self.shield -= absorbed
+        self.hp = max(0.0, self.hp - (damage - absorbed))
+        return damage
 
 
 class Combat:
@@ -99,9 +107,7 @@ class Combat:
         raw = max(MIN_DAMAGE, raw)
         damage = raw * armor_multiplier(defender.armor)
         damage = damage * resist_multiplier(defender.resist)
-        absorbed = min(defender.shield, damage)
-        defender.shield -= damage
-        defender.hp = max(0.0, defender.hp - (damage - absorbed))
+        damage = defender.absorb_damage(damage)
         self.log.append({
             "round": self.round,
             "kind": "attack",
@@ -123,7 +129,7 @@ class Combat:
         if not target.alive:
             return 0.0
         amount = max(0.0, float(amount))
-        restored = min(amount, target.max_hp)
+        restored = min(amount, target.missing_hp())
         target.hp += restored
         overflow = amount - restored
         if overflow > 0.0:
@@ -166,16 +172,20 @@ class Combat:
         self.round += 1
         events = []
         for unit in self.units:
+            if not unit.alive:
+                unit.dots = []
+                continue
             for effect in list(unit.dots):
+                if not unit.alive:
+                    break
                 self._tick_dot(unit, effect)
                 events.append((unit.name, effect.damage))
-            unit.dots = [effect for effect in unit.dots if effect.turns >= 0]
+            unit.dots = [effect for effect in unit.dots if effect.turns > 0]
         return events
 
     def _tick_dot(self, unit, effect):
         """结算一段持续伤害。"""
-        damage = effect.damage
-        unit.hp = max(0.0, unit.hp - damage)
+        damage = unit.absorb_damage(effect.damage)
         effect.turns -= 1
         self.log.append({
             "round": self.round,
