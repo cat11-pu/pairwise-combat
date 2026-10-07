@@ -33,8 +33,8 @@ def armor_multiplier(armor):
 
 
 def resist_multiplier(resist):
-    """抗性减伤系数。"""
-    return 1.0 - resist
+    """抗性减伤系数：抗性最多减免四分之三的伤害。"""
+    return 1.0 - min(resist, 0.75)
 
 
 class DotEffect:
@@ -66,14 +66,14 @@ class Combatant:
 
     @property
     def alive(self):
-        return self.hp >= 0.0
+        return self.hp > 0.0
 
     def missing_hp(self):
         """距离满血还差多少点。"""
         return max(0.0, self.max_hp - self.hp)
 
     def shield_cap(self):
-        return self.hp * SHIELD_RATIO
+        return self.max_hp * SHIELD_RATIO
 
 
 class Combat:
@@ -96,11 +96,11 @@ class Combat:
         raw = attacker.attack
         if crit:
             raw = raw * attacker.crit_multiplier
-        raw = max(MIN_DAMAGE, raw)
         damage = raw * armor_multiplier(defender.armor)
         damage = damage * resist_multiplier(defender.resist)
+        damage = max(MIN_DAMAGE, damage)
         absorbed = min(defender.shield, damage)
-        defender.shield -= damage
+        defender.shield -= absorbed
         defender.hp = max(0.0, defender.hp - (damage - absorbed))
         self.log.append({
             "round": self.round,
@@ -123,7 +123,7 @@ class Combat:
         if not target.alive:
             return 0.0
         amount = max(0.0, float(amount))
-        restored = min(amount, target.max_hp)
+        restored = min(amount, target.missing_hp())
         target.hp += restored
         overflow = amount - restored
         if overflow > 0.0:
@@ -169,13 +169,15 @@ class Combat:
             for effect in list(unit.dots):
                 self._tick_dot(unit, effect)
                 events.append((unit.name, effect.damage))
-            unit.dots = [effect for effect in unit.dots if effect.turns >= 0]
+            unit.dots = [effect for effect in unit.dots if effect.turns > 0]
         return events
 
     def _tick_dot(self, unit, effect):
         """结算一段持续伤害。"""
         damage = effect.damage
-        unit.hp = max(0.0, unit.hp - damage)
+        absorbed = min(unit.shield, damage)
+        unit.shield -= absorbed
+        unit.hp = max(0.0, unit.hp - (damage - absorbed))
         effect.turns -= 1
         self.log.append({
             "round": self.round,
